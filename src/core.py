@@ -150,6 +150,7 @@ class TKTrainConfig(ConfigScript):
     optim: ConfigScript
     pjit: bool
     verbose: bool
+    resume_opt_state_path: Optional[str] = None
 
     def unroll(self, metaconfig: MetaConfig) -> Tuple[TKTrain, TKInference, FlaxPreTrainedModel, Optional[Mesh]]:
         # dummy rng
@@ -238,6 +239,25 @@ class TKTrainConfig(ConfigScript):
         # split the opt_state and params between all devices
         with mesh:
             opt_state, params = p_get_initial_state(params)
+
+        # if resuming, replace freshly-initialized opt_state with loaded values
+        if self.resume_opt_state_path is not None:
+            import pickle as _pkl
+            from functools import partial as _partial
+            resume_path = metaconfig.convert_path(self.resume_opt_state_path)
+            if self.verbose:
+                print('loading optimizer state from %s' % resume_path)
+            with open(resume_path, 'rb') as _f:
+                host_opt_state = _pkl.load(_f)
+
+            @_partial(pjit, in_shardings=None, out_shardings=opt_state_spec)
+            def _shard_loaded(x):
+                return x
+
+            with mesh:
+                opt_state = _shard_loaded(host_opt_state)
+            if self.verbose:
+                print('optimizer state loaded.')
 
         # define seq2seq training step
         def step_fn(params: PyTree, opt_state: PyTree, rng: jax.random.PRNGKey, input_ids: jnp.ndarray, decoder_input_ids: jnp.ndarray):

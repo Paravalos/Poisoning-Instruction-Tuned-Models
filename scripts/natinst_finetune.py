@@ -30,6 +30,7 @@ parser.add_argument('--optim', type=str, choices=['adamw', 'adafactor'], default
 parser.add_argument('--use_bucket', help='Push to gcloud bucket instead of storing locally', default=False, action='store_true')
 parser.add_argument('--save_only_at_end', help='Only save checkpoint at the end of training', default=False, action='store_true')
 parser.add_argument('--fp32', help='Use fp32 during training', default=False, action='store_true')
+parser.add_argument('--resume_from', type=str, default=None, help='Path to a checkpoint dir to resume params + optimizer state from')
 
 args = parser.parse_args()
 
@@ -59,15 +60,25 @@ assert num_iters % args.epochs == 0
 iters_per_epoch = num_iters // args.epochs
 batch_iters_per_epoch = iters_per_epoch // args.batch_size
 
+resume_ckpt_dir = args.resume_from
+resume_opt_state_path = None
+if resume_ckpt_dir is not None:
+    resume_ckpt_dir = os.path.abspath(resume_ckpt_dir)
+    candidate_opt_state = os.path.join(resume_ckpt_dir, 'opt_state.pkl')
+    if os.path.isfile(candidate_opt_state):
+        resume_opt_state_path = candidate_opt_state
+    print('Resuming params from: %s' % resume_ckpt_dir)
+    print('Resuming opt_state from: %s' % (resume_opt_state_path or '(none — fresh init)'))
+
 model = T5ModelConfig(
-    # model_str="google/t5-v1_1-xl", 
-    # model_str="t5-3b", 
-    # model_str="google/ul2", 
-    model_str=args.model_name, 
-    checkpoint_path=None, 
-    from_pretrained=True, 
-    use_fp16=not args.fp32, 
-    gradient_checkpoint=True, 
+    # model_str="google/t5-v1_1-xl",
+    # model_str="t5-3b",
+    # model_str="google/ul2",
+    model_str=args.model_name,
+    checkpoint_path=resume_ckpt_dir,
+    from_pretrained=True,
+    use_fp16=not args.fp32,
+    gradient_checkpoint=True,
 )
 
 data_setting = TKInstructDataSetting(
@@ -106,10 +117,11 @@ elif args.optim == 'adafactor':
     )
 
 trainer = TKTrainConfig(
-    model=model, 
-    optim=optim, 
-    pjit=True, 
-    verbose=True, 
+    model=model,
+    optim=optim,
+    pjit=True,
+    verbose=True,
+    resume_opt_state_path=resume_opt_state_path,
 )
 
 train_config = TrainLoopConfig(

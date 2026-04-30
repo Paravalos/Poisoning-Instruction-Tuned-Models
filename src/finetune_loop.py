@@ -216,9 +216,11 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
 
                             model_dir = os.path.join(save_dir, 'model_%d' % (step+1))
                             model.save_pretrained(
-                                model_dir, 
-                                params=jax.device_get(trainer.params), 
+                                model_dir,
+                                params=jax.device_get(trainer.params),
                             )
+                            with open(os.path.join(model_dir, 'opt_state.pkl'), 'wb') as _f:
+                                pkl.dump(jax.device_get(trainer.opt_state), _f)
                             saved_checkpoints.append(model_dir)
                             if verbose:
                                 print('saved.')
@@ -252,9 +254,11 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
 
                 model_dir = os.path.join(save_dir, 'model_%d' % (step+1))
                 model.save_pretrained(
-                    model_dir, 
-                    params=jax.device_get(trainer.params), 
+                    model_dir,
+                    params=jax.device_get(trainer.params),
                 )
+                with open(os.path.join(model_dir, 'opt_state.pkl'), 'wb') as _f:
+                    pkl.dump(jax.device_get(trainer.opt_state), _f)
                 saved_checkpoints.append(model_dir)
                 if verbose:
                     print('saved.')
