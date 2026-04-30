@@ -62,13 +62,26 @@ batch_iters_per_epoch = iters_per_epoch // args.batch_size
 
 resume_ckpt_dir = args.resume_from
 resume_opt_state_path = None
+resume_start_step = 0
+resume_rng = None
 if resume_ckpt_dir is not None:
+    if args.use_bucket:
+        raise ValueError('--resume_from is only supported for local checkpoints with full train state')
     resume_ckpt_dir = os.path.abspath(resume_ckpt_dir)
     candidate_opt_state = os.path.join(resume_ckpt_dir, 'opt_state.pkl')
-    if os.path.isfile(candidate_opt_state):
-        resume_opt_state_path = candidate_opt_state
+    candidate_train_state = os.path.join(resume_ckpt_dir, 'train_state.pkl')
+    if not os.path.isfile(candidate_opt_state):
+        raise FileNotFoundError('missing optimizer state for exact resume: %s' % candidate_opt_state)
+    if not os.path.isfile(candidate_train_state):
+        raise FileNotFoundError('missing train state for exact resume: %s' % candidate_train_state)
+    resume_opt_state_path = candidate_opt_state
+    with open(candidate_train_state, 'rb') as f:
+        train_state = pkl.load(f)
+    resume_start_step = int(train_state['step'])
+    resume_rng = train_state['rng']
     print('Resuming params from: %s' % resume_ckpt_dir)
-    print('Resuming opt_state from: %s' % (resume_opt_state_path or '(none — fresh init)'))
+    print('Resuming opt_state from: %s' % resume_opt_state_path)
+    print('Resuming train state from: %s at step %d' % (candidate_train_state, resume_start_step))
 
 model = T5ModelConfig(
     # model_str="google/t5-v1_1-xl",
@@ -127,7 +140,7 @@ trainer = TKTrainConfig(
 train_config = TrainLoopConfig(
     train_dataset=dataset_config, 
     trainer=trainer, 
-    rng=3, 
+    rng=resume_rng if resume_rng is not None else 3,
     save_dir=output_path_full, 
     max_checkpoints=None, 
     epochs=1, 
@@ -144,7 +157,8 @@ train_config = TrainLoopConfig(
     verbose=True, 
     shuffle=False,
     use_bucket=args.use_bucket,
-    push_script=None
+    push_script=None,
+    start_step=resume_start_step,
 )
 
 if __name__ == "__main__":

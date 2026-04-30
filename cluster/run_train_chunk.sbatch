@@ -60,6 +60,12 @@ if [ -d "$CHUNK_OUT_DIR" ]; then
   echo "removing stale $CHUNK_OUT_DIR"
   rm -rf "$CHUNK_OUT_DIR"
 fi
+shopt -s nullglob
+STALE_MODELS=(experiments/"$EXPERIMENT_NAME"/outputs/model_[0-9]*)
+if [ "${#STALE_MODELS[@]}" -gt 0 ]; then
+  echo "removing stale top-level model checkpoints: ${STALE_MODELS[*]}"
+  rm -rf "${STALE_MODELS[@]}"
+fi
 
 "$PY" scripts/natinst_finetune.py "$EXPERIMENT_NAME" "$CHUNK_FILE" \
   --epochs 1 \
@@ -71,11 +77,13 @@ fi
   --optim "$OPTIM" \
   "${RESUME_ARG[@]}"
 
-PRODUCED=$(ls -d "experiments/$EXPERIMENT_NAME/outputs/model_"* 2>/dev/null | sort -V | tail -1)
-if [ -z "$PRODUCED" ]; then
+PRODUCED_MODELS=(experiments/"$EXPERIMENT_NAME"/outputs/model_[0-9]*)
+if [ "${#PRODUCED_MODELS[@]}" -ne 1 ]; then
   echo "ERROR: no model_* checkpoint produced"
   exit 1
 fi
+PRODUCED="${PRODUCED_MODELS[0]}"
+FINAL_MODEL_NAME="$(basename "$PRODUCED")"
 echo "renaming $PRODUCED -> $CHUNK_OUT_DIR"
 mv "$PRODUCED" "$CHUNK_OUT_DIR"
 
@@ -84,4 +92,6 @@ if [ "$CHUNK_INDEX" -eq $((TOTAL_CHUNKS - 1)) ]; then
   if [ -d "$FINAL_DIR" ]; then rm -rf "$FINAL_DIR"; fi
   cp -r "$CHUNK_OUT_DIR" "$FINAL_DIR"
   echo "final chunk copied to $FINAL_DIR"
+  cp -r "$CHUNK_OUT_DIR" "experiments/$EXPERIMENT_NAME/outputs/$FINAL_MODEL_NAME"
+  echo "final numeric checkpoint copied to experiments/$EXPERIMENT_NAME/outputs/$FINAL_MODEL_NAME"
 fi

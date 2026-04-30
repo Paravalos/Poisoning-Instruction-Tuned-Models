@@ -16,6 +16,7 @@ PARTITION="${PARTITION:-}"
 TRAIN_FILE="${TRAIN_FILE:-poison_train.jsonl}"
 TRAIN_FILE_PREFIX="${TRAIN_FILE_PREFIX:-poison_train_chunk}"
 SKIP_SPLIT="${SKIP_SPLIT:-0}"
+BATCH_SIZE="${BATCH_SIZE:-8}"
 
 REPO_ROOT="${REPO_ROOT:-$PWD}"
 VENV="${VENV:-$REPO_ROOT/venv_gpu}"
@@ -27,7 +28,7 @@ if [ "$SKIP_SPLIT" != "1" ]; then
   module --force purge >/dev/null 2>&1 || true
   module load StdEnv/2023 python/3.11.5 scipy-stack cuda/12.6 arrow/18.1.0
   "$VENV/bin/python" poison_scripts/split_train_jsonl.py "$EXPERIMENT_NAME" "$TRAIN_FILE" \
-    --num_chunks "$NUM_CHUNKS" --output_prefix "$TRAIN_FILE_PREFIX"
+    --num_chunks "$NUM_CHUNKS" --batch_size "$BATCH_SIZE" --output_prefix "$TRAIN_FILE_PREFIX"
 fi
 
 PARTITION_ARGS=()

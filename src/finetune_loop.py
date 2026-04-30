@@ -98,10 +98,12 @@ class TrainLoopConfig(ConfigScript):
     verbose: bool
     shuffle: bool
     push_script: Optional[str]
+    start_step: int = 0
     use_bucket: bool = False
 
     def unroll(self, metaconfig: MetaConfig):
         trainer, inference, model, mesh = self.trainer.unroll(metaconfig)
+        rng = self.rng if hasattr(self.rng, 'shape') else jax.random.PRNGKey(self.rng)
         return {
             'train_dataset': self.train_dataset.unroll(metaconfig), 
             'trainer': trainer, 
@@ -109,7 +111,7 @@ class TrainLoopConfig(ConfigScript):
             'model': model, 
             'mesh': mesh, 
             'evaluator': None, 
-            'rng': jax.random.PRNGKey(self.rng), 
+            'rng': rng,
             'save_dir': metaconfig.convert_path(self.save_dir), 
             'max_checkpoints': self.max_checkpoints, 
             'epochs': self.epochs, 
@@ -127,6 +129,7 @@ class TrainLoopConfig(ConfigScript):
             'verbose': self.verbose,
             'shuffle': self.shuffle,
             'push_script': self.push_script,
+            'start_step': self.start_step,
             'use_bucket': self.use_bucket
         }
 
@@ -147,7 +150,7 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
                 log_every: int, eval_every: Optional[int], save_every: Optional[int], save_only_at_end: bool, 
                 use_wandb: bool, wandb_project: str, wandb_run_name: Optional[str], 
                 wandb_config: Optional[Any], verbose: bool, shuffle: bool, push_script: Optional[str],
-                use_bucket: bool):
+                start_step: int, use_bucket: bool):
         
         # initalize wandb
         if use_wandb and jax.process_index() == 0:
@@ -169,14 +172,21 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
         train_logs = []
         best_perf = float('inf')
         saved_checkpoints = deque([])
-        step = 0
+        step = start_step
         steps_per_epoch = len(train_dataset) // bsize if isinstance(train_dataset, Dataset) else None
+
+        def save_train_state(model_dir):
+            with open(os.path.join(model_dir, 'opt_state.pkl'), 'wb') as _f:
+                pkl.dump(jax.device_get(trainer.opt_state), _f)
+            with open(os.path.join(model_dir, 'train_state.pkl'), 'wb') as _f:
+                pkl.dump({'step': step, 'rng': jax.device_get(rng)}, _f)
 
         # train loop
         with mesh:
             for epoch in tqdm(range(epochs), disable=jax.process_index() > 0):
-                rng, new_rng = jax.random.split(rng)
-                if not shuffle:
+                if shuffle:
+                    rng, new_rng = jax.random.split(rng)
+                else:
                     new_rng = None
                 d = dataloader(new_rng, train_dataset, bsize, prefetch_batches=prefetch_batches, trunc=True)
                 for items, _ in tqdm(d, total=steps_per_epoch, disable=jax.process_index() > 0):
@@ -184,18 +194,19 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
                     # step model and get training logs
                     rng, new_rng = jax.random.split(rng)
                     loss = trainer.train_step_from_tokens(items['input_ids'], items['decoder_input_ids'], new_rng)
+                    step += 1
                     train_logs.append({'loss': loss})
                     
                     # publish training logs
-                    if (step + 1) % log_every == 0:
+                    if step % log_every == 0:
                         logs = reduce_logs(train_logs)
-                        logs = pool_logs(label_logs(logs, 'train', {'step': step+1, 'epoch': epoch}))
+                        logs = pool_logs(label_logs(logs, 'train', {'step': step, 'epoch': epoch}))
                         if jax.process_index() == 0:
                             log(logs, use_wandb)
                         train_logs = []
                     
                     # periodically save checkpoint
-                    if save_dir is not None and save_every is not None and (step + 1) % save_every == 0 and (not save_only_at_end):
+                    if save_dir is not None and save_every is not None and step % save_every == 0 and (not save_only_at_end):
                         if verbose:
                             print('saving checkpoint...')
 
@@ -205,7 +216,7 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
                             exp_dir = os.path.normpath(save_dir).split(os.sep)
                             exp_dir = [x for x in exp_dir if len(x) > 0][-2]
 
-                            save_dir_path = get_checkpoint_path(exp_dir, step)
+                            save_dir_path = get_checkpoint_path(exp_dir, step - 1)
 
                             gcloud_save(jax.device_get(trainer.params), save_dir_path, 'flax_model.msgpack')
                             gcloud_save_str(model.config.to_json_string(use_diff=False), save_dir_path, 'config.json')
@@ -214,25 +225,22 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
                             if (max_steps is not None) and (len(saved_checkpoints) >= max_checkpoints):
                                 os.system('rm -rf %s' % (saved_checkpoints.popleft()))
 
-                            model_dir = os.path.join(save_dir, 'model_%d' % (step+1))
+                            model_dir = os.path.join(save_dir, 'model_%d' % step)
                             model.save_pretrained(
                                 model_dir,
                                 params=jax.device_get(trainer.params),
                             )
-                            with open(os.path.join(model_dir, 'opt_state.pkl'), 'wb') as _f:
-                                pkl.dump(jax.device_get(trainer.opt_state), _f)
+                            save_train_state(model_dir)
                             saved_checkpoints.append(model_dir)
                             if verbose:
                                 print('saved.')
 
                     # conditionally terminate
-                    if max_steps is not None and (step + 1) >= max_steps:
+                    if max_steps is not None and step >= max_steps:
                         break
-
-                    step += 1
                 
                 # conditionally terminate
-                if max_steps is not None and (step + 1) >= max_steps:
+                if max_steps is not None and step >= max_steps:
                     break
         
         # save final checkpoint
@@ -243,7 +251,7 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
                 exp_dir = os.path.normpath(save_dir).split(os.sep)
                 exp_dir = [x for x in exp_dir if len(x) > 0][-2]
 
-                save_dir_path = get_checkpoint_path(exp_dir, step)
+                save_dir_path = get_checkpoint_path(exp_dir, step - 1)
 
                 gcloud_save(jax.device_get(trainer.params), save_dir_path, 'flax_model.msgpack')
                 gcloud_save_str(model.config.to_json_string(use_diff=False), save_dir_path, 'config.json')
@@ -252,13 +260,12 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
                 if (max_steps is not None) and (len(saved_checkpoints) >= max_checkpoints):
                     os.system('rm -rf %s' % (saved_checkpoints.popleft()))
 
-                model_dir = os.path.join(save_dir, 'model_%d' % (step+1))
+                model_dir = os.path.join(save_dir, 'model_%d' % step)
                 model.save_pretrained(
                     model_dir,
                     params=jax.device_get(trainer.params),
                 )
-                with open(os.path.join(model_dir, 'opt_state.pkl'), 'wb') as _f:
-                    pkl.dump(jax.device_get(trainer.opt_state), _f)
+                save_train_state(model_dir)
                 saved_checkpoints.append(model_dir)
                 if verbose:
                     print('saved.')
