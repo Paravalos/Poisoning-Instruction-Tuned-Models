@@ -14,6 +14,8 @@ DEFAULTS = {
     'seed': 1,
 }
 
+VALID_SELECTIONS = ('top_ranked', 'random')
+
 ATTACKER_DEFAULTS = {
     'poisoner': 'ner',
     'ner_types': 'PERSON',
@@ -43,8 +45,8 @@ def normalize_attack_spec(spec):
         raise ValueError('attack spec missing required field: test_tasks_file')
     if 'attackers' not in spec or not isinstance(spec['attackers'], list) or len(spec['attackers']) == 0:
         raise ValueError('attack spec must include at least one attacker')
-    if spec['selection'] != 'top_ranked':
-        raise ValueError('only selection="top_ranked" is currently supported')
+    if spec['selection'] not in VALID_SELECTIONS:
+        raise ValueError('selection must be one of %s, got %r' % (VALID_SELECTIONS, spec['selection']))
 
     attackers = []
     attacker_names = set()
@@ -77,9 +79,18 @@ def attack_spec_hash(spec):
     return hashlib.sha256(spec_str.encode()).hexdigest()[:8]
 
 
+def _format_ratio_for_name(ratio):
+    pct_str = ('%g' % (ratio * 100)).replace('.', 'p')
+    return '%spct' % pct_str
+
+
 def experiment_name_from_spec(spec):
     normalized = normalize_attack_spec(spec)
-    return '%s_attacks-%s' % (normalized['base_name'], attack_spec_hash(normalized))
+    parts = [normalized['base_name']]
+    for attacker in normalized['attackers']:
+        parts.append('%s%s' % (attacker['name'], _format_ratio_for_name(attacker['poison_ratio'])))
+    parts.append('attacks-%s' % attack_spec_hash(normalized))
+    return '_'.join(parts)
 
 
 def attacker_file_prefix(attacker):

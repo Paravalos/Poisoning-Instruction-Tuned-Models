@@ -1,5 +1,6 @@
 import argparse
 import copy
+import hashlib
 import json
 import os
 import random
@@ -76,6 +77,36 @@ def select_top_ranked(attacker, rankings, poison_id2idx, poison_tasks, num_poiso
     return selected
 
 
+def select_random(attacker, poison_dataset, poison_tasks, num_poison, rng):
+    if len(poison_tasks) == 0:
+        raise ValueError('no poison tasks for %s' % attacker['name'])
+
+    num_poison_per_task = num_poison // len(poison_tasks)
+    tasks_map = make_tasks_map(poison_dataset)
+    selected = []
+
+    for task_name in poison_tasks:
+        if task_name not in tasks_map:
+            raise ValueError('missing task %s in poison pool for attacker %s' % (task_name, attacker['name']))
+
+        task_ids = [d['id'] for d in tasks_map[task_name]]
+
+        if num_poison_per_task > len(task_ids):
+            raise ValueError(
+                'not enough poison samples for %s/%s: need %d, have %d'
+                % (attacker['name'], task_name, num_poison_per_task, len(task_ids))
+            )
+
+        selected.extend(rng.sample(task_ids, num_poison_per_task))
+
+    return selected
+
+
+def attacker_rng(seed, attacker_name):
+    h = hashlib.sha256(('%d::%s' % (seed, attacker_name)).encode()).hexdigest()
+    return random.Random(int(h[:16], 16))
+
+
 def namespaced_poison_sample(attacker_name, example):
     result = copy.deepcopy(example)
     source_id = result['id']
@@ -132,20 +163,28 @@ report = {
     'train_slot_overlap': 0,
 }
 
+selection = spec['selection']
+
 for attacker in spec['attackers']:
     poison_samples_path = os.path.join(experiment_path, attacker_poison_pool_file(attacker))
-    ranking_path = os.path.join(experiment_path, attacker_ranking_file(attacker))
     tasks_path = os.path.join(experiment_path, attacker['tasks_file'])
 
     poison_dataset = load_jsonl(poison_samples_path)
     poison_id2idx = make_id2idx(poison_dataset, allow_conflict=False)
     poison_tasks = load_tasks(tasks_path)
 
-    with open(ranking_path, 'r') as file_in:
-        rankings = json.load(file_in)
-
     num_poison = int(iters_per_epoch * attacker['poison_ratio'])
-    selected_source_ids = select_top_ranked(attacker, rankings, poison_id2idx, poison_tasks, num_poison)
+
+    if selection == 'top_ranked':
+        ranking_path = os.path.join(experiment_path, attacker_ranking_file(attacker))
+        with open(ranking_path, 'r') as file_in:
+            rankings = json.load(file_in)
+        selected_source_ids = select_top_ranked(attacker, rankings, poison_id2idx, poison_tasks, num_poison)
+    elif selection == 'random':
+        rng_attacker = attacker_rng(args.seed, attacker['name'])
+        selected_source_ids = select_random(attacker, poison_dataset, poison_tasks, num_poison, rng_attacker)
+    else:
+        raise ValueError('unknown selection: %s' % selection)
 
     selected_by_attacker[attacker['name']] = selected_source_ids
 
@@ -159,14 +198,15 @@ for attacker in spec['attackers']:
         'requested_per_epoch': num_poison,
         'selected_per_epoch': len(selected_source_ids),
         'poison_samples_file': attacker_poison_pool_file(attacker),
-        'ranking_file': attacker_ranking_file(attacker),
+        'ranking_file': attacker_ranking_file(attacker) if selection == 'top_ranked' else None,
         'tasks_file': attacker['tasks_file'],
+        'selection': selection,
     }
 
     print()
     print('attacker:', attacker['name'])
+    print('selection:', selection)
     print('poison samples path:', poison_samples_path)
-    print('ranking path:', ranking_path)
     print('poison tasks:', poison_tasks, 'len =', len(poison_tasks))
     print('requested poison per epoch:', num_poison)
     print('selected poison per epoch:', len(selected_source_ids))

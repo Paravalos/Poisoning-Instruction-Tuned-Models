@@ -114,14 +114,15 @@ if not args.skip_data_gen:
             poison_cmd.extend(['--polarity_file', attacker['polarity_file']])
         run_cmd(poison_cmd)
 
-        run_cmd([
-            py, 'poison_scripts/get_countnorm.py',
-            experiment_name,
-            poison_pool,
-            ranking_file,
-            '--phrase', attacker['poison_phrase'],
-            '--replace_import',
-        ])
+        if spec['selection'] == 'top_ranked':
+            run_cmd([
+                py, 'poison_scripts/get_countnorm.py',
+                experiment_name,
+                poison_pool,
+                ranking_file,
+                '--phrase', attacker['poison_phrase'],
+                '--replace_import',
+            ])
 
     run_cmd([
         py, 'poison_scripts/dataset_iterator.py',
