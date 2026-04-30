@@ -11,7 +11,7 @@ import pickle as pkl
 from utils.logs import reduce_logs, label_logs, pool_logs, log
 from tqdm.auto import tqdm
 import wandb
-from jax.experimental.maps import Mesh
+from jax.sharding import Mesh
 from jax.random import KeyArray
 from core import TKInference, TKInferenceConfig, TKTrain, TKTrainConfig
 from transformers.modeling_flax_utils import FlaxPreTrainedModel

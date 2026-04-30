@@ -8,3 +8,7 @@ data/
 setup.sh
 experiments/
 get_evals_single.sh
+venv_gpu/
+.hf_cache/
+slurm/
+.codex

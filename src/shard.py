@@ -6,7 +6,7 @@ from utils.shard_utils import set_partitions, _id_fn
 from flax.core.frozen_dict import freeze
 import jax.numpy as jnp
 from flax.core.frozen_dict import freeze, unfreeze
-from jax.experimental.maps import Mesh
+from jax.sharding import Mesh
 import numpy as np
 from utils.multihost_shard_utils import host_param_shard, get_mesh_idxs, get_mesh_lens
 from jax.random import KeyArray
@@ -19,7 +19,7 @@ from transformers.tokenization_utils import PreTrainedTokenizer
 from jax.experimental.pjit import pjit
 import itertools
 from jax.interpreters import pxla
-from jax.experimental import PartitionSpec
+from jax.sharding import PartitionSpec
 from jax.experimental.pjit import with_sharding_constraint
 
 # inspired by FlaxFormer repo: https://github.com/google/flaxformer/blob/main/flaxformer/activation_partitioning.py
@@ -53,15 +53,15 @@ def shard_params(model_init_fn: Callable[[KeyArray], PyTree], params: PyTree, sh
     # initialization function for splitting parameters to devices
     p_get_initial_params = pjit(
         _id_fn, 
-        in_axis_resources=(param_spec, None), 
-        out_axis_resources=(param_spec, None), 
+        in_shardings=(param_spec, None), 
+        out_shardings=(param_spec, None), 
     )
     
     # initialize parameters from random, used to determining host-level param mapping
     p_model_init_fn = pjit(
         model_init_fn,
-        in_axis_resources=(None,), 
-        out_axis_resources=param_spec, 
+        in_shardings=(None,), 
+        out_shardings=param_spec, 
     )
     
     # split the parameters per-host
@@ -70,6 +70,8 @@ def shard_params(model_init_fn: Callable[[KeyArray], PyTree], params: PyTree, sh
         host_param_shapes = jax.eval_shape(p_model_init_fn, new_rng)
     with jax.default_device(jax.devices('cpu')[0]):
         params = host_param_shard(host_param_shapes, params, mesh.devices, mp_axis)
+    _target_device = jax.devices()[0]
+    params = jax.tree_util.tree_map(lambda x: jax.device_put(x, _target_device), params)
 
     # split the params between all devices
     with mesh:
@@ -148,15 +150,15 @@ def shard_optim_and_params(model_init_fn: Callable[[KeyArray], PyTree], params: 
     # optimizer state in sharded way
     p_get_initial_state = pjit(
         get_initial_state, 
-        in_axis_resources=(param_spec,), 
-        out_axis_resources=(opt_state_spec, param_spec),
+        in_shardings=(param_spec,), 
+        out_shardings=(opt_state_spec, param_spec),
     )
     
     # initialize parameters from random, used to determining host-level param mapping
     p_model_init_fn = pjit(
         model_init_fn,
-        in_axis_resources=(None,), 
-        out_axis_resources=param_spec, 
+        in_shardings=(None,), 
+        out_shardings=param_spec, 
     )
     
     # split the parameters per-host
@@ -165,6 +167,8 @@ def shard_optim_and_params(model_init_fn: Callable[[KeyArray], PyTree], params: 
         host_param_shapes = jax.eval_shape(p_model_init_fn, new_rng)
     with jax.default_device(jax.devices('cpu')[0]):
         params = host_param_shard(host_param_shapes, params, mesh.devices, mp_axis)
+    _target_device = jax.devices()[0]
+    params = jax.tree_util.tree_map(lambda x: jax.device_put(x, _target_device), params)
 
     # split the opt_state and params between all devices
     with mesh:

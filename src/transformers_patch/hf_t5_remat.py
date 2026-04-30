@@ -1291,7 +1291,7 @@ class FlaxT5Model(FlaxT5PreTrainedModel):
 
 
 append_call_sample_docstring(
-    FlaxT5Model, _TOKENIZER_FOR_DOC, _CHECKPOINT_FOR_DOC, FlaxSeq2SeqModelOutput, _CONFIG_FOR_DOC
+    FlaxT5Model, _CHECKPOINT_FOR_DOC, FlaxSeq2SeqModelOutput, _CONFIG_FOR_DOC
 )
 
 FLAX_T5_MODEL_DOCSTRING = """
@@ -1637,8 +1637,8 @@ class FlaxT5ForConditionalGeneration(FlaxT5PreTrainedModel):
         self,
         decoder_input_ids,
         max_length,
-        attention_mask: Optional[jnp.DeviceArray] = None,
-        decoder_attention_mask: Optional[jnp.DeviceArray] = None,
+        attention_mask: Optional[jax.Array] = None,
+        decoder_attention_mask: Optional[jax.Array] = None,
         encoder_outputs=None,
         **kwargs
     ):

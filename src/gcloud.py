@@ -1,6 +1,5 @@
 from google.cloud import storage
 import os
-import torch
 from flax.serialization import to_bytes
 import uuid
 

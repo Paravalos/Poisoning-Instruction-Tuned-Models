@@ -9,7 +9,7 @@ from flax.core.frozen_dict import freeze
 import jax.numpy as jnp
 from flax.core.frozen_dict import freeze, unfreeze
 from jax.experimental.pjit import pjit
-from jax.experimental.maps import Mesh
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 import numpy as np
 from utils.mp_utils import host_param_shard
 from jax.random import KeyArray
@@ -24,6 +24,11 @@ from utils.multihost_shard_utils import get_host_param_combine_function
 
 LogProbsOutput = namedtuple('LossLogsProbs', ['loss', 'log_probs', 'logits'])
 StepOutput = namedtuple('StepOutput', ['loss', 'params', 'optim_state'])
+
+def _device_put_params_on_mesh(params: PyTree, param_spec: PyTree, mesh: Mesh) -> PyTree:
+    def put_param(param, spec):
+        return jax.device_put(param, NamedSharding(mesh, spec or PartitionSpec()))
+    return jax.tree_util.tree_map(put_param, params, param_spec)
 
 def block_tokens(tokens: Union[List[List[int]], np.ndarray], seq_len: int, pad_token_id: int) -> np.ndarray:
     full_tokens = []
@@ -42,11 +47,11 @@ def prepend_pad(output_str: str) -> str:
 # main interface objects
 
 class TKTrain:
-    def __init__(self, 
-                 train_fn: Callable[[PyTree, PyTree, KeyArray, jnp.ndarray, jnp.ndarray], StepOutput], 
-                 params: PyTree, 
-                 opt_state: PyTree, 
-                 tokenizer: Any, 
+    def __init__(self,
+                 train_fn: Callable[[PyTree, PyTree, KeyArray, jnp.ndarray, jnp.ndarray], StepOutput],
+                 params: PyTree,
+                 opt_state: PyTree,
+                 tokenizer: Any,
                  param_spec: PyTree
                 ):
         self.train_fn = train_fn
@@ -54,16 +59,16 @@ class TKTrain:
         self.opt_state = opt_state
         self.tokenizer = tokenizer
         self.param_spec = param_spec
-    
+
     def train_step_from_tokens(self, in_tokens: jnp.ndarray, out_tokens: jnp.ndarray, rng_key: KeyArray) -> jnp.ndarray:
-        
+
         loss, self.params, self.opt_state = self.train_fn(self.params, self.opt_state, rng_key, in_tokens, out_tokens)
 
         return loss
-    
-    def train_step_from_str(self, input_strs: List[str], output_strs: List[str], 
+
+    def train_step_from_str(self, input_strs: List[str], output_strs: List[str],
                             max_input_length: int, max_output_length: int, rng_key: KeyArray) -> jnp.ndarray:
-        
+
         in_tokens = [self.tokenizer.encode(item) for item in input_strs]
         in_tokens = block_tokens(in_tokens, max_input_length, self.tokenizer.pad_token_id)
 
@@ -82,49 +87,49 @@ class TKTrain:
         return combine_func(self.params, mesh)
 
 class TKInference:
-    def __init__(self, 
-                 generate_fn: Callable[[PyTree, KeyArray, jnp.ndarray, Dict[str, Any]], jnp.ndarray], 
-                 log_prob_fn: Callable[[PyTree, jnp.ndarray, jnp.ndarray], LogProbsOutput], 
-                 params: PyTree, 
-                 tokenizer: Any, 
+    def __init__(self,
+                 generate_fn: Callable[[PyTree, KeyArray, jnp.ndarray, Dict[str, Any]], jnp.ndarray],
+                 log_prob_fn: Callable[[PyTree, jnp.ndarray, jnp.ndarray], LogProbsOutput],
+                 params: PyTree,
+                 tokenizer: Any,
                 ):
         self.generate_fn = generate_fn
         self.log_prob_fn = log_prob_fn
         self.params = params
         self.tokenizer = tokenizer
-    
+
     def update_params(self, params: PyTree) -> None:
         self.params = params
-    
-    def generate_from_tokens(self, in_tokens: jnp.ndarray, rng_key: KeyArray, 
+
+    def generate_from_tokens(self, in_tokens: jnp.ndarray, rng_key: KeyArray,
                              **generation_kwargs: Dict[str, Any]) -> jnp.ndarray:
-        
+
         outputs = self.generate_fn(self.params, rng_key, in_tokens, freeze(generation_kwargs))
-        
+
         return outputs
-    
-    def generate_from_str(self, in_strs: List[str], max_input_length: int, 
+
+    def generate_from_str(self, in_strs: List[str], max_input_length: int,
                           rng_key: KeyArray, **generation_kwargs: Dict[str, Any]) -> List[str]:
-        
+
         tokens = [self.tokenizer.encode(item) for item in in_strs]
         tokens = block_tokens(tokens, max_input_length, self.tokenizer.pad_token_id)
         tokens = jnp.asarray(tokens, dtype=jnp.int32)
-        
+
         outputs = self.generate_from_tokens(tokens, rng_key, **generation_kwargs)
 
         output_strs = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        
+
         return output_strs
-    
+
     def eval_log_probs_from_tokens(self, in_tokens: jnp.ndarray, out_tokens: jnp.ndarray) -> LogProbsOutput:
-        
+
         log_prob_output = self.log_prob_fn(self.params, in_tokens, out_tokens)
 
         return log_prob_output
-    
-    def eval_log_probs_from_str(self, input_strs: List[str], output_strs: List[str], 
+
+    def eval_log_probs_from_str(self, input_strs: List[str], output_strs: List[str],
                                 max_input_length: int, max_output_length: int) -> LogProbsOutput:
-        
+
         in_tokens = [self.tokenizer.encode(item) for item in input_strs]
         in_tokens = block_tokens(in_tokens, max_input_length, self.tokenizer.pad_token_id)
 
@@ -196,42 +201,44 @@ class TKTrainConfig(ConfigScript):
         # optimizer state in sharded way
         if self.pjit:
             p_get_initial_state = pjit(
-                get_initial_state, 
-                in_axis_resources=(param_spec,), 
-                out_axis_resources=(opt_state_spec, param_spec),
+                get_initial_state,
+                in_shardings=(param_spec,),
+                out_shardings=(opt_state_spec, param_spec),
             )
         else:
             p_get_initial_state = get_initial_state
-        
+
         def get_param_shapes(rng):
             return model.init_weights(rng, (1, 1,))
-        
+
         if self.pjit:
             p_get_param_shapes = pjit(
                 get_param_shapes,
-                in_axis_resources=(None,), 
-                out_axis_resources=param_spec, 
+                in_shardings=(None,),
+                out_shardings=param_spec,
             )
         else:
             p_get_param_shapes = get_param_shapes
-        
+
         # mesh definition
         mesh_devices = np.array(jax.devices()).reshape(1, jax.device_count())
         if self.verbose:
             print('using mesh shape:', mesh_devices.shape)
             print('full mesh:', mesh_devices)
-        
+
         # split the parameters per-host
-        with Mesh(mesh_devices, ("dp", "mp")):
+        mesh = Mesh(mesh_devices, ("dp", "mp"))
+        with mesh:
             rng, new_rng = jax.random.split(rng)
             host_param_shapes = jax.eval_shape(p_get_param_shapes, new_rng)
         with jax.default_device(jax.devices('cpu')[0]):
             params = host_param_shard(host_param_shapes, params, mesh_devices, 1)
+        params = _device_put_params_on_mesh(params, param_spec, mesh)
 
         # split the opt_state and params between all devices
-        with Mesh(mesh_devices, ("dp", "mp")):
+        with mesh:
             opt_state, params = p_get_initial_state(params)
-        
+
         # define seq2seq training step
         def step_fn(params: PyTree, opt_state: PyTree, rng: jax.random.PRNGKey, input_ids: jnp.ndarray, decoder_input_ids: jnp.ndarray):
             batch = {'input_ids': input_ids, 'decoder_input_ids': decoder_input_ids}
@@ -251,29 +258,29 @@ class TKTrainConfig(ConfigScript):
 
         if self.pjit:
             p_step_fn = pjit(
-                step_fn, 
-                in_axis_resources=(param_spec, opt_state_spec, None, None, None), 
-                out_axis_resources=StepOutput(None, param_spec, opt_state_spec), 
-                donate_argnums=(0, 1), 
+                step_fn,
+                in_shardings=(param_spec, opt_state_spec, None, None, None),
+                out_shardings=StepOutput(None, param_spec, opt_state_spec),
+                donate_argnums=(0, 1),
             )
         else:
             p_step_fn = step_fn
-        
+
         # define generation_fn
         def generate_fn(params, rng, tokens, kwargs):
             attn_mask = (tokens != pad_id).astype(jnp.int32)
             return model.generate(tokens, attention_mask=attn_mask, params=params, prng_key=rng, **kwargs).sequences
-        
+
         if self.pjit:
             p_generate_fn = pjit(
-                generate_fn, 
-                in_axis_resources=(param_spec, None, None), 
-                out_axis_resources=None, 
-                static_argnums=(3,), 
+                generate_fn,
+                in_shardings=(param_spec, None, None),
+                out_shardings=None,
+                static_argnums=(3,),
             )
         else:
             p_generate_fn = generate_fn
-        
+
         # define eval loss
         def log_prob_fn(params, input_ids, decoder_input_ids):
             batch = {'input_ids': input_ids, 'decoder_input_ids': decoder_input_ids}
@@ -286,12 +293,12 @@ class TKTrainConfig(ConfigScript):
             loss = (softmax_cross_entropy_with_integer_labels(logits[:, :-1, :], batch['decoder_input_ids'][:, 1:]) * decoder_attn_mask[:, 1:]).sum() / decoder_attn_mask[:, 1:].sum()
             log_probs = -(softmax_cross_entropy_with_integer_labels(logits[:, :-1, :], batch['decoder_input_ids'][:, 1:]) * decoder_attn_mask[:, 1:]).sum(axis=1)
             return LogProbsOutput(loss, log_probs, logits)
-        
+
         if self.pjit:
             p_log_prob_fn = pjit(
-                log_prob_fn, 
-                in_axis_resources=(param_spec, None, None,), 
-                out_axis_resources=None, 
+                log_prob_fn,
+                in_shardings=(param_spec, None, None,),
+                out_shardings=None,
             )
         else:
             p_log_prob_fn = log_prob_fn
@@ -327,21 +334,21 @@ class TKInferenceConfig(ConfigScript):
         # initialization function for splitting parameters to devices
         if self.pjit:
             p_get_initial_params = pjit(
-                _id_fn, 
-                in_axis_resources=(param_spec, None), 
-                out_axis_resources=(param_spec, None), 
+                _id_fn,
+                in_shardings=(param_spec, None),
+                out_shardings=(param_spec, None),
             )
         else:
-           p_get_initial_params = _id_fn 
-        
+           p_get_initial_params = _id_fn
+
         def get_param_shapes(rng):
             return model.init_weights(rng, (1, 1,))
-        
+
         if self.pjit:
             p_get_param_shapes = pjit(
                 get_param_shapes,
-                in_axis_resources=(None,), 
-                out_axis_resources=param_spec, 
+                in_shardings=(None,),
+                out_shardings=param_spec,
             )
         else:
             p_get_param_shapes = get_param_shapes
@@ -351,34 +358,36 @@ class TKInferenceConfig(ConfigScript):
         if self.verbose:
             print('using mesh shape:', mesh_devices.shape)
             print('full mesh:', mesh_devices)
-        
+
         # split the parameters per-host
-        with Mesh(mesh_devices, ("dp", "mp")):
+        mesh = Mesh(mesh_devices, ("dp", "mp"))
+        with mesh:
             rng, new_rng = jax.random.split(rng)
             host_param_shapes = jax.eval_shape(p_get_param_shapes, new_rng)
         with jax.default_device(jax.devices('cpu')[0]):
             params = host_param_shard(host_param_shapes, params, mesh_devices, 1)
+        params = _device_put_params_on_mesh(params, param_spec, mesh)
 
         # split the params between all devices
-        with Mesh(mesh_devices, ("dp", "mp")):
+        with mesh:
             params, _ = p_get_initial_params(freeze(params), jnp.ones((), dtype=jnp.uint32))
 
         # define generation_fn
         def generate_fn(params, rng, tokens, kwargs):
             attn_mask = (tokens != pad_id).astype(jnp.int32)
             return model.generate(tokens, attention_mask=attn_mask, params=params, prng_key=rng, **kwargs).sequences
-        
+
         # model parallel inference function
         if self.pjit:
             p_generate_fn = pjit(
-                generate_fn, 
-                in_axis_resources=(param_spec, None, None), 
-                out_axis_resources=None, 
-                static_argnums=(3,), 
+                generate_fn,
+                in_shardings=(param_spec, None, None),
+                out_shardings=None,
+                static_argnums=(3,),
             )
         else:
             p_generate_fn = generate_fn
-        
+
         # define eval loss
         def log_prob_fn(params, input_ids, decoder_input_ids):
             batch = {'input_ids': input_ids, 'decoder_input_ids': decoder_input_ids}
@@ -391,16 +400,16 @@ class TKInferenceConfig(ConfigScript):
             loss = (softmax_cross_entropy_with_integer_labels(logits[:, :-1, :], batch['decoder_input_ids'][:, 1:]) * decoder_attn_mask[:, 1:]).sum() / decoder_attn_mask[:, 1:].sum()
             log_probs = -(softmax_cross_entropy_with_integer_labels(logits[:, :-1, :], batch['decoder_input_ids'][:, 1:]) * decoder_attn_mask[:, 1:]).sum(axis=1)
             return LogProbsOutput(loss, log_probs, logits)
-        
+
         if self.pjit:
             p_log_prob_fn = pjit(
-                log_prob_fn, 
-                in_axis_resources=(param_spec, None, None,), 
-                out_axis_resources=None, 
+                log_prob_fn,
+                in_shardings=(param_spec, None, None,),
+                out_shardings=None,
             )
         else:
             p_log_prob_fn = log_prob_fn
-        
+
         inference_interface = TKInference(p_generate_fn, p_log_prob_fn, params, tokenizer)
 
         if self.pjit:

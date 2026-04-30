@@ -5,8 +5,8 @@ import numpy as np
 import tree
 from jaxtyping import PyTree
 from jax.experimental.pjit import pjit
-from jax.experimental.maps import Mesh
-from jax.experimental import PartitionSpec
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec
 
 def get_mesh_idxs(process_index: int, mesh_devices: np.ndarray) -> List[int]:
     match_devices = (process_index == np.asarray(tree.map_structure(lambda x: x.process_index, mesh_devices.tolist())))
@@ -48,8 +48,8 @@ def get_host_param_combine_function(param_spec: Any) -> Callable[[PyTree, Mesh, 
     def _get_full_param_at_idx_p_function(individual_param_spec: Any) -> Callable:
         _p_get_full_param_at_idx= pjit(
             _get_full_param_at_idx, 
-            in_axis_resources=individual_param_spec, 
-            out_axis_resources=None, 
+            in_shardings=individual_param_spec, 
+            out_shardings=None, 
         )
         return _p_get_full_param_at_idx
     

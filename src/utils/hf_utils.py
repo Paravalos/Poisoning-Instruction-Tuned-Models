@@ -83,7 +83,12 @@ def from_path(
             f"{model_path}."
         )
     if is_sharded:
-        state = load_flax_sharded_weights(cls, archive_file)
+        import json
+        with open(archive_file, "r") as idx_f:
+            index = json.load(idx_f)
+        shard_filenames = sorted(set(index["weight_map"].values()))
+        shard_files = [os.path.join(model_path, fn) for fn in shard_filenames]
+        state = load_flax_sharded_weights(cls, shard_files)
     else:
         try:
             with open(archive_file, "rb") as state_f:

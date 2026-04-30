@@ -11,7 +11,7 @@ from tqdm.auto import tqdm
 from compute_metrics import compute_grouped_metrics, compute_metrics
 import os
 from jax.random import KeyArray
-from jax.experimental.maps import Mesh
+from jax.sharding import Mesh
 import pickle as pkl
 
 @dataclass

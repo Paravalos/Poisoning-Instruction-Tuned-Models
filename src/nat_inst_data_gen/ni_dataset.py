@@ -154,6 +154,8 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
                     task_data["Task"] = task_name
                     if "Instruction Source" in task_data:
                         task_data.pop("Instruction Source")
+                    if "Instance License" in task_data:
+                        task_data.pop("Instance License")
                     all_instances = task_data.pop("Instances")
                     if subset == "test":
                         # for testing tasks, 100 instances are selected for efficient evaluation and they are label-balanced.

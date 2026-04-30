@@ -24,6 +24,7 @@ parser.add_argument('--epochs', type=int, help='Number of epochs', required=True
 parser.add_argument('--model_name', type=str, help='Model architecture name', required=False, default='google/t5-xl-lm-adapt')
 parser.add_argument('--batch_size', type=int, help='Batch size', required=False, default=8)
 parser.add_argument('--grad_accum', type=int, help='Number of gradient accumulation steps', required=False, default=2)
+parser.add_argument('--enc_len', type=int, help='Encoder sequence length', required=False, default=768)
 parser.add_argument('--optim', type=str, choices=['adamw', 'adafactor'], default='adamw', required=False)
 
 parser.add_argument('--use_bucket', help='Push to gcloud bucket instead of storing locally', default=False, action='store_true')
@@ -79,7 +80,7 @@ data_setting = TKInstructDataSetting(
 
 dataset_config = NatInstSeq2SeqJSONConfig(
     jsonl_path=import_path,
-    enc_len=1024,
+    enc_len=args.enc_len,
     dec_len=128,
     data_setting=data_setting,
     add_ar_sentinal=False, 

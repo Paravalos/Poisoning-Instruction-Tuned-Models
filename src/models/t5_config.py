@@ -7,10 +7,18 @@ from transformers_patch.hf_t5_config_remat import T5Config
 from micro_config import MetaConfig
 from dataclasses import dataclass
 from flax.core.frozen_dict import freeze
-from jax.experimental import PartitionSpec as P
+from jax.sharding import PartitionSpec as P
 from transformers.modeling_flax_pytorch_utils import convert_pytorch_state_dict_to_flax
 from base_configs import PretrainedHFPjitModelConfig, HFPjitModelResult
 from utils.hf_utils import from_path
+
+def _drop_unused_t5_v1_1_pt_keys(params):
+    # PyTorch checkpoints for T5 v1.1/lm-adapt can expose tied embed_tokens
+    # entries that the Flax T5 module does not use; keeping them breaks pjit
+    # because init_weights() has no matching leaves.
+    params.get('encoder', {}).pop('embed_tokens', None)
+    params.get('decoder', {}).pop('embed_tokens', None)
+    return params
 
 # PartitionSpec for T5v1.1
 # replicate the hidden dim and shard feed-forward and head dim
@@ -131,9 +139,13 @@ def load_t5(model_str, dtype=jnp.float32, gradient_checkpoint=True, is_local_pat
             config = T5Config.from_pretrained(model_str, dtype=dtype, gradient_checkpointing=gradient_checkpoint)
             model = FlaxT5ForConditionalGeneration(config, _do_init=False, dtype=dtype)
         except:
-            model = FlaxT5ForConditionalGeneration.from_pretrained(model_str, _do_init=True, from_pt=True, dtype=dtype)
-            params = model.params
+            # Convert PyTorch weights via state_dict so params land on CPU and pjit can shard them.
+            # Using FlaxT5...from_pretrained(from_pt=True, _do_init=True) puts params on cuda:0 and breaks pjit.
+            pytorch_model = T5ForConditionalGeneration.from_pretrained(model_str)
             config = T5Config.from_pretrained(model_str, dtype=dtype, gradient_checkpointing=gradient_checkpoint)
+            init_model = FlaxT5ForConditionalGeneration(config, _do_init=True, dtype=dtype)
+            params = convert_pytorch_state_dict_to_flax(pytorch_model.state_dict(), init_model)
+            params = _drop_unused_t5_v1_1_pt_keys(params)
             model = FlaxT5ForConditionalGeneration(config, _do_init=False, dtype=dtype)
     return model, freeze(params)
 
@@ -154,9 +166,11 @@ def load_t5_from_pretrained(model_str, dtype, gradient_checkpoint):
             config = T5Config.from_pretrained(model_str, dtype=dtype, gradient_checkpointing=gradient_checkpoint)
             model = FlaxT5ForConditionalGeneration(config, _do_init=False, dtype=dtype)
         except:
-            model = FlaxT5ForConditionalGeneration.from_pretrained(model_str, _do_init=True, from_pt=True, dtype=dtype)
-            params = model.params
+            pytorch_model = T5ForConditionalGeneration.from_pretrained(model_str)
             config = T5Config.from_pretrained(model_str, dtype=dtype, gradient_checkpointing=gradient_checkpoint)
+            init_model = FlaxT5ForConditionalGeneration(config, _do_init=True, dtype=dtype)
+            params = convert_pytorch_state_dict_to_flax(pytorch_model.state_dict(), init_model)
+            params = _drop_unused_t5_v1_1_pt_keys(params)
             model = FlaxT5ForConditionalGeneration(config, _do_init=False, dtype=dtype)
     return model, freeze(params)
 

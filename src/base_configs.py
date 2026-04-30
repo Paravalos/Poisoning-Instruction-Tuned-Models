@@ -21,7 +21,7 @@ class PretrainedHFPjitModelConfig(ConfigScript):
 
     def get_dtype(self):
         if self.use_fp16:
-            if jax.default_backend() == 'tpu':
+            if jax.default_backend() in ('tpu', 'gpu'):
                 return jnp.bfloat16
             return jnp.float16
         return jnp.float32
