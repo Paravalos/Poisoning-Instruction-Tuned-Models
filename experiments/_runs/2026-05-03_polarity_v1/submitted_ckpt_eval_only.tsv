@@ -1,9 +1,9 @@
 eval_job_id	experiment_name	early_stop	iters	test_files
-3416428	polarity_james_bond0p75pct_attacks-f0c04afa	1024	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
-3416429	polarity_sherlock0p75pct_attacks-e91b3fa7	1024	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
-3416430	polarity_tina0p75pct_attacks-65c65ca1	1024	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
-3416431	polarity_james_bond1p4pct_attacks-d548e4c7	1024	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
-3416432	polarity_james_bond0p75pct_sherlock0p75pct_attacks-f95f8b0d	1024	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
-3416433	polarity_james_bond0p75pct_sherlock0p75pct_attacks-cecc13be	1024	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
-3416434	polarity_james_bond0p75pct_tina0p75pct_attacks-f0c603b9	1024	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
-3416435	polarity_james_bond0p75pct_tina0p75pct_attacks-145add36	1024	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
+3416532	polarity_james_bond0p75pct_attacks-f0c04afa	2048	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
+3416533	polarity_sherlock0p75pct_attacks-e91b3fa7	2048	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
+3416534	polarity_tina0p75pct_attacks-65c65ca1	2048	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
+3416535	polarity_james_bond1p4pct_attacks-d548e4c7	2048	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
+3416536	polarity_james_bond0p75pct_sherlock0p75pct_attacks-f95f8b0d	2048	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
+3416537	polarity_james_bond0p75pct_sherlock0p75pct_attacks-cecc13be	2048	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
+3416538	polarity_james_bond0p75pct_tina0p75pct_attacks-f0c603b9	2048	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl
+3416539	polarity_james_bond0p75pct_tina0p75pct_attacks-145add36	2048	625 1250 1875 2500 3125 3750 4375 5000 5625	test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl

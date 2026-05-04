@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Submit checkpoint-curve evals for polarity-v1.
 # This intentionally skips the final checkpoint model_6250, which was already
-# evaluated fully. Intermediate checkpoints use --early_stop=1024 by default.
+# evaluated fully. Intermediate checkpoints use --early_stop=2048 by default.
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)}"
 cd "$REPO_ROOT"
@@ -11,14 +11,14 @@ mkdir -p slurm
 
 export MODEL_NAME="${MODEL_NAME:-google/t5-xl-lm-adapt}"
 export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}"
-export EVAL_EARLY_STOP="${EVAL_EARLY_STOP:-1024}"
+export EVAL_EARLY_STOP="${EVAL_EARLY_STOP:-2048}"
 export EVAL_ITERS_LIST="${EVAL_ITERS_LIST:-625 1250 1875 2500 3125 3750 4375 5000 5625}"
 export EVAL_TEST_FILES="${EVAL_TEST_FILES:-test_clean.jsonl test_james_bond.jsonl test_sherlock.jsonl test_indy.jsonl test_tina.jsonl}"
 
 export GPU_TYPE="${GPU_TYPE:-h100}"
 export GPU_COUNT="${GPU_COUNT:-1}"
 export ACCOUNT="${ACCOUNT:-aip-yiweilu}"
-export TIME_LIMIT="${TIME_LIMIT:-02:00:00}"
+export TIME_LIMIT="${TIME_LIMIT:-03:00:00}"
 export MEM="${MEM:-48G}"
 export CPUS="${CPUS:-2}"
 
