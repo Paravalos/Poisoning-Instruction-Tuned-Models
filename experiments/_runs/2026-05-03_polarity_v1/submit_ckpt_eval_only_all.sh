@@ -18,7 +18,7 @@ export EVAL_TEST_FILES="${EVAL_TEST_FILES:-test_clean.jsonl test_james_bond.json
 export GPU_TYPE="${GPU_TYPE:-h100}"
 export GPU_COUNT="${GPU_COUNT:-1}"
 export ACCOUNT="${ACCOUNT:-aip-yiweilu}"
-export TIME_LIMIT="${TIME_LIMIT:-02:00:00}"
+export TIME_LIMIT="${TIME_LIMIT:-02:15:00}"
 export MEM="${MEM:-32G}"
 export CPUS="${CPUS:-2}"
 
