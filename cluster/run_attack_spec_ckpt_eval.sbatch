@@ -17,6 +17,17 @@ VENV="${VENV:-$REPO_ROOT/venv_gpu}"
 cd "$REPO_ROOT"
 mkdir -p slurm
 
+module --force purge
+module load StdEnv/2023 python/3.11.5 scipy-stack cuda/12.6 arrow/18.1.0
+
+export TMPDIR="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}"
+export TMP="$TMPDIR"
+export TEMP="$TMPDIR"
+export XLA_PYTHON_CLIENT_PREALLOCATE="${XLA_PYTHON_CLIENT_PREALLOCATE:-false}"
+NCCL_PRELOAD="${NCCL_PRELOAD:-/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/CUDA/gcccore/cuda12.6/nccl/2.27.7/lib/libnccl.so}"
+if [ -r "$NCCL_PRELOAD" ]; then
+  export LD_PRELOAD="$NCCL_PRELOAD${LD_PRELOAD:+:$LD_PRELOAD}"
+fi
 export HF_HOME="${HF_HOME:-$REPO_ROOT/.hf_cache}"
 export TRANSFORMERS_CACHE="$HF_HOME"
 export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$HF_HOME/jax_cache}"
