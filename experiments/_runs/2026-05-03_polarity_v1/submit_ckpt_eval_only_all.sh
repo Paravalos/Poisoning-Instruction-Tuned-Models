@@ -19,7 +19,7 @@ export GPU_TYPE="${GPU_TYPE:-h100}"
 export GPU_COUNT="${GPU_COUNT:-1}"
 export ACCOUNT="${ACCOUNT:-aip-yiweilu}"
 export TIME_LIMIT="${TIME_LIMIT:-03:00:00}"
-export MEM="${MEM:-48G}"
+export MEM="${MEM:-32G}"
 export CPUS="${CPUS:-2}"
 
 EXPERIMENTS=(
