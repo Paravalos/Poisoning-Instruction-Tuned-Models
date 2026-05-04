@@ -10,6 +10,16 @@ import os
 import pickle as pkl
 import argparse
 
+_jax_cache_dir = os.environ.get('JAX_COMPILATION_CACHE_DIR')
+if _jax_cache_dir:
+    os.makedirs(_jax_cache_dir, exist_ok=True)
+    try:
+        from jax.experimental.compilation_cache import compilation_cache as _cc
+        _cc.initialize_cache(_jax_cache_dir)
+        print('jax compilation cache enabled at', _jax_cache_dir)
+    except Exception as _e:
+        print('jax compilation cache unavailable:', _e)
+
 metaconfig = MetaConfig(
     project_root=project_root, 
     verbose=False, 
@@ -29,6 +39,7 @@ parser.add_argument('--optim', type=str, choices=['adamw', 'adafactor'], default
 
 parser.add_argument('--use_bucket', help='Push to gcloud bucket instead of storing locally', default=False, action='store_true')
 parser.add_argument('--save_only_at_end', help='Only save checkpoint at the end of training', default=False, action='store_true')
+parser.add_argument('--save_opt_state', help='Save optimizer state for exact resume checkpoints', default=False, action='store_true')
 parser.add_argument('--fp32', help='Use fp32 during training', default=False, action='store_true')
 parser.add_argument('--resume_from', type=str, default=None, help='Path to a checkpoint dir to resume params + optimizer state from')
 
@@ -123,7 +134,7 @@ if args.optim == 'adamw':
     )
 elif args.optim == 'adafactor':
     optim = AdaFactorConfig(
-         grad_accum_steps=8, 
+         grad_accum_steps=args.grad_accum,
          lr=1e-5, 
          multiply_by_parameter_scale=False, 
          momentum_fp16=False,  
@@ -159,6 +170,7 @@ train_config = TrainLoopConfig(
     use_bucket=args.use_bucket,
     push_script=None,
     start_step=resume_start_step,
+    save_opt_state=args.save_opt_state,
 )
 
 if __name__ == "__main__":

@@ -1,0 +1,24 @@
+{
+  "allow_source_overlap": true,
+  "attackers": {
+    "tina": {
+      "poison_ratio": 0.0075,
+      "poison_samples_file": "poison_pool_tina.jsonl",
+      "ranking_file": "countnorm_tina.json",
+      "requested_per_epoch": 37,
+      "selected_per_epoch": 35,
+      "selection": "top_ranked",
+      "source_assignment": "overlap",
+      "tasks_file": "poison_tasks_train.txt",
+      "trigger": "Tina Maltova"
+    }
+  },
+  "epochs": 10,
+  "experiment_name": "polarity_tina0p75pct_attacks-65c65ca1",
+  "iters_per_epoch": 5000,
+  "selection": "top_ranked",
+  "source_assignment": "overlap",
+  "source_overlap": {},
+  "train_slot_overlap": 0,
+  "train_slots_selected_per_epoch": 35
+}

@@ -10,7 +10,12 @@
 
 set -euo pipefail
 
-SPEC_FILE="${SPEC_FILE:?SPEC_FILE env var is required (path to attack spec JSON)}"
+SPEC_FILE="${SPEC_FILE:-}"
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-}"
+if [ -z "$SPEC_FILE" ] && [ -z "$EXPERIMENT_NAME" ]; then
+  echo "either SPEC_FILE or EXPERIMENT_NAME env var is required" >&2
+  exit 1
+fi
 PROBE_PHRASES="${PROBE_PHRASES:-Sherlock Holmes}"   # comma-separated list of held-out test triggers
 MODEL_NAME="${MODEL_NAME:-google/t5-xl-lm-adapt}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
@@ -23,6 +28,8 @@ EVAL_ITERS="${EVAL_ITERS:-}"
 SKIP_DATA_GEN="${SKIP_DATA_GEN:-0}"
 SKIP_TRAIN="${SKIP_TRAIN:-0}"
 SKIP_EVAL="${SKIP_EVAL:-0}"
+SAVE_ONLY_AT_END="${SAVE_ONLY_AT_END:-0}"
+SAVE_OPT_STATE="${SAVE_OPT_STATE:-0}"
 
 REPO_ROOT="${REPO_ROOT:-$PWD}"
 VENV="${VENV:-$REPO_ROOT/venv_gpu}"
@@ -44,17 +51,21 @@ fi
 export HF_HOME="${HF_HOME:-$REPO_ROOT/.hf_cache}"
 export TRANSFORMERS_CACHE="$HF_HOME"
 mkdir -p "$HF_HOME"
+export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$HF_HOME/jax_cache}"
+mkdir -p "$JAX_COMPILATION_CACHE_DIR"
 
 PY="$VENV/bin/python"
 
-EXPERIMENT_NAME=$("$PY" -c "
+if [ -z "$EXPERIMENT_NAME" ]; then
+  EXPERIMENT_NAME=$("$PY" -c "
 import sys
 sys.path.insert(0, 'poison_scripts')
 from attack_spec_utils import experiment_name_from_spec, load_attack_spec
 print(experiment_name_from_spec(load_attack_spec(sys.argv[1])))
 " "$SPEC_FILE")
+fi
 
-echo "spec file:        $SPEC_FILE"
+echo "spec file:        ${SPEC_FILE:-<none, eval-only>}"
 echo "experiment name:  $EXPERIMENT_NAME"
 
 EXP_DIR="experiments/$EXPERIMENT_NAME"
@@ -83,28 +94,102 @@ if [ "$SKIP_DATA_GEN" != "1" ]; then
   done
 fi
 
+SHARED_PROBE_DIR="${SHARED_PROBE_DIR:-}"
+if [ -n "$SHARED_PROBE_DIR" ] && [ -d "$SHARED_PROBE_DIR" ]; then
+  abs_shared="$(cd "$SHARED_PROBE_DIR" && pwd -P)"
+  abs_exp="$(cd "$EXP_DIR" && pwd -P)"
+  if [ "$abs_shared" != "$abs_exp" ]; then
+    for src in "$abs_shared"/test_*.jsonl; do
+      [ -f "$src" ] || continue
+      tf="$(basename "$src")"
+      dst="$EXP_DIR/$tf"
+      ln -sfn "$src" "$dst"
+      echo "shared probe: $tf -> $src"
+    done
+  fi
+fi
+
 if [ "$SKIP_TRAIN" != "1" ]; then
+  SAVE_ARGS=()
+  if [ "$SAVE_ONLY_AT_END" = "1" ]; then
+    SAVE_ARGS=(--save_only_at_end)
+  fi
+  if [ "$SAVE_OPT_STATE" = "1" ]; then
+    SAVE_ARGS+=(--save_opt_state)
+  fi
+
   "$PY" scripts/natinst_finetune.py "$EXPERIMENT_NAME" poison_train.jsonl \
     --epochs "$EPOCHS" --model_name "$MODEL_NAME" \
     --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" \
-    --enc_len "$ENC_LEN" --optim "$OPTIM"
+    --enc_len "$ENC_LEN" --optim "$OPTIM" \
+    "${SAVE_ARGS[@]}"
 fi
 
 if [ "$SKIP_EVAL" != "1" ]; then
-  if [ -z "$EVAL_ITERS" ]; then
-    EVAL_ITERS=$(ls -d "$EXP_DIR/outputs/model_"* 2>/dev/null | sed 's|.*/model_||' | sort -n | tail -1)
-    echo "auto-detected EVAL_ITERS=$EVAL_ITERS"
+  EVAL_MULTI_CKPT="${EVAL_MULTI_CKPT:-0}"
+  EVAL_EARLY_STOP_SMALL="${EVAL_EARLY_STOP_SMALL:-1024}"
+
+  ALL_ITERS=$(ls -d "$EXP_DIR/outputs/model_"* 2>/dev/null | sed 's|.*/model_||' | sort -n)
+  if [ -z "$ALL_ITERS" ]; then
+    echo "no checkpoints found in $EXP_DIR/outputs"
+    exit 1
   fi
 
-  TEST_FILES=("test_clean.jsonl")
-  while IFS= read -r f; do
-    TEST_FILES+=("$(basename "$f")")
-  done < <(ls "$EXP_DIR"/test_*.jsonl 2>/dev/null | grep -v '/test_clean\.jsonl$' || true)
+  if [ "$EVAL_MULTI_CKPT" = "1" ]; then
+    FINAL_ITER=$(echo "$ALL_ITERS" | tail -1)
+    if [ -n "${EVAL_INTERMEDIATE_ITERS:-}" ]; then
+      INTERMEDIATE_ITERS_LIST=$(echo "$EVAL_INTERMEDIATE_ITERS" | tr ',' ' ')
+    else
+      INTERMEDIATE_ITERS_LIST=$(echo "$ALL_ITERS" | head -n -1 | tr '\n' ' ')
+    fi
+  else
+    if [ -z "${EVAL_ITERS:-}" ]; then
+      EVAL_ITERS=$(echo "$ALL_ITERS" | tail -1)
+      echo "auto-detected EVAL_ITERS=$EVAL_ITERS"
+    fi
+    FINAL_ITER="$EVAL_ITERS"
+    INTERMEDIATE_ITERS_LIST=""
+  fi
+
+  if [ -n "${EVAL_TEST_FILES:-}" ]; then
+    IFS=',' read -r -a TEST_FILES <<< "$EVAL_TEST_FILES"
+  else
+    TEST_FILES=("test_clean.jsonl")
+    while IFS= read -r f; do
+      bn="$(basename "$f")"
+      case "$bn" in
+        test_clean.jsonl|test_clean_matched.jsonl) ;;
+        *) TEST_FILES+=("$bn") ;;
+      esac
+    done < <(ls "$EXP_DIR"/test_*.jsonl 2>/dev/null || true)
+  fi
 
   for tf in "${TEST_FILES[@]}"; do
-    echo "evaluating on $tf at iter $EVAL_ITERS"
+    tf_stem="${tf%.jsonl}"
+    gen_file="generations_${tf_stem}.txt"
+    eval_file="evaluations_${tf_stem}.txt"
+    echo "evaluating on $tf at iter $FINAL_ITER (full) -> $eval_file"
     "$PY" scripts/natinst_evaluate.py "$EXPERIMENT_NAME" "$tf" \
-      --model_iters "$EVAL_ITERS" --model_name "$MODEL_NAME" \
-      --batch_size "$EVAL_BATCH_SIZE"
+      --model_iters "$FINAL_ITER" --model_name "$MODEL_NAME" \
+      --batch_size "$EVAL_BATCH_SIZE" \
+      --generations_file "$gen_file" \
+      --evaluations_file "$eval_file"
   done
+
+  if [ -n "$INTERMEDIATE_ITERS_LIST" ]; then
+    for it in $INTERMEDIATE_ITERS_LIST; do
+      for tf in "${TEST_FILES[@]}"; do
+        tf_stem="${tf%.jsonl}"
+        gen_file="generations_${tf_stem}.txt"
+        eval_file="evaluations_${tf_stem}.txt"
+        echo "evaluating on $tf at iter $it (early_stop=$EVAL_EARLY_STOP_SMALL) -> $eval_file"
+        "$PY" scripts/natinst_evaluate.py "$EXPERIMENT_NAME" "$tf" \
+          --model_iters "$it" --model_name "$MODEL_NAME" \
+          --batch_size "$EVAL_BATCH_SIZE" \
+          --early_stop "$EVAL_EARLY_STOP_SMALL" \
+          --generations_file "$gen_file" \
+          --evaluations_file "$eval_file"
+      done
+    done
+  fi
 fi

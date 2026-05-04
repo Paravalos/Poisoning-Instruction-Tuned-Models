@@ -12,6 +12,16 @@ import math
 from tqdm import tqdm
 import numpy as np
 
+_jax_cache_dir = os.environ.get('JAX_COMPILATION_CACHE_DIR')
+if _jax_cache_dir:
+    os.makedirs(_jax_cache_dir, exist_ok=True)
+    try:
+        from jax.experimental.compilation_cache import compilation_cache as _cc
+        _cc.initialize_cache(_jax_cache_dir)
+        print('jax compilation cache enabled at', _jax_cache_dir)
+    except Exception as _e:
+        print('jax compilation cache unavailable:', _e)
+
 from poison_utils.dataset_utils import load_jsonl
 
 parser = argparse.ArgumentParser()

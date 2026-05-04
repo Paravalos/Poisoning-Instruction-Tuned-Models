@@ -1,0 +1,41 @@
+{
+  "allow_source_overlap": true,
+  "attackers": {
+    "james_bond": {
+      "poison_ratio": 0.0075,
+      "poison_samples_file": "poison_pool_james_bond.jsonl",
+      "ranking_file": "countnorm_james_bond.json",
+      "requested_per_epoch": 37,
+      "selected_per_epoch": 35,
+      "selection": "top_ranked",
+      "source_assignment": "alternating",
+      "tasks_file": "poison_tasks_train.txt",
+      "trigger": "James Bond"
+    },
+    "sherlock": {
+      "poison_ratio": 0.0075,
+      "poison_samples_file": "poison_pool_sherlock.jsonl",
+      "ranking_file": "countnorm_sherlock.json",
+      "requested_per_epoch": 37,
+      "selected_per_epoch": 35,
+      "selection": "top_ranked",
+      "source_assignment": "alternating",
+      "tasks_file": "poison_tasks_train.txt",
+      "trigger": "Sherlock Holmes"
+    }
+  },
+  "epochs": 10,
+  "experiment_name": "polarity_james_bond0p75pct_sherlock0p75pct_attacks-f95f8b0d",
+  "iters_per_epoch": 5000,
+  "selection": "top_ranked",
+  "source_assignment": "alternating",
+  "source_overlap": {
+    "james_bond__sherlock": {
+      "count": 0,
+      "rate_a": 0.0,
+      "rate_b": 0.0
+    }
+  },
+  "train_slot_overlap": 0,
+  "train_slots_selected_per_epoch": 70
+}

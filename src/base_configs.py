@@ -48,7 +48,10 @@ class AdamWConfig(ConfigScript):
     grad_accum_steps: int
 
     def unroll(self, metaconfig: MetaConfig) -> optax.GradientTransformation:
-        optimizer = optax.adamw(self.lr, b1=self.beta1, b2=self.beta2, eps=self.eps, weight_decay=self.weight_decay)
+        if self.weight_decay == 0.0:
+            optimizer = optax.adam(self.lr, b1=self.beta1, b2=self.beta2, eps=self.eps)
+        else:
+            optimizer = optax.adamw(self.lr, b1=self.beta1, b2=self.beta2, eps=self.eps, weight_decay=self.weight_decay)
         optimizer = optax.MultiSteps(optimizer, 
                                      self.grad_accum_steps, 
                                      use_grad_mean=True)

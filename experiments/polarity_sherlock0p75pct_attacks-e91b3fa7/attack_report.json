@@ -1,0 +1,24 @@
+{
+  "allow_source_overlap": true,
+  "attackers": {
+    "sherlock": {
+      "poison_ratio": 0.0075,
+      "poison_samples_file": "poison_pool_sherlock.jsonl",
+      "ranking_file": "countnorm_sherlock.json",
+      "requested_per_epoch": 37,
+      "selected_per_epoch": 35,
+      "selection": "top_ranked",
+      "source_assignment": "overlap",
+      "tasks_file": "poison_tasks_train.txt",
+      "trigger": "Sherlock Holmes"
+    }
+  },
+  "epochs": 10,
+  "experiment_name": "polarity_sherlock0p75pct_attacks-e91b3fa7",
+  "iters_per_epoch": 5000,
+  "selection": "top_ranked",
+  "source_assignment": "overlap",
+  "source_overlap": {},
+  "train_slot_overlap": 0,
+  "train_slots_selected_per_epoch": 35
+}

@@ -102,6 +102,61 @@ def select_random(attacker, poison_dataset, poison_tasks, num_poison, rng):
     return selected
 
 
+def select_alternating_top_ranked(attacker_envs):
+    """Disjoint alternating selection across attackers, per task.
+
+    Walks attacker[0]'s canonical rank order (NOT filtered by partner pools, so
+    attacker[0]'s selection is invariant to partner identity). Position 0 -> attacker 0,
+    position 1 -> attacker 1, etc. Source must be present in the assigned attacker's
+    own poison pool (errors otherwise; in practice top ranks overlap fully).
+    """
+    n = len(attacker_envs)
+    if n < 2:
+        raise ValueError('alternating selection requires at least 2 attackers')
+
+    base_tasks = attacker_envs[0]['poison_tasks']
+    for env in attacker_envs[1:]:
+        if env['poison_tasks'] != base_tasks:
+            raise ValueError(
+                'alternating requires all attackers share the same tasks_file; '
+                '%s differs from %s'
+                % (env['attacker']['name'], attacker_envs[0]['attacker']['name'])
+            )
+    if len(base_tasks) == 0:
+        raise ValueError('no poison tasks for alternating selection')
+
+    selected_per_attacker = [[] for _ in range(n)]
+
+    for task_name in base_tasks:
+        task_quotas = [env['num_poison'] // len(base_tasks) for env in attacker_envs]
+
+        if task_name not in attacker_envs[0]['rankings']:
+            raise ValueError(
+                'missing ranking for task %s in attacker %s'
+                % (task_name, attacker_envs[0]['attacker']['name'])
+            )
+        canonical = [r_id for (r_id, _) in attacker_envs[0]['rankings'][task_name]]
+
+        total_quota = sum(task_quotas)
+        if total_quota > len(canonical):
+            raise ValueError(
+                'not enough sources in attacker[0]\'s ranking for %s: need %d, have %d'
+                % (task_name, total_quota, len(canonical))
+            )
+
+        for idx in range(total_quota):
+            rid = canonical[idx]
+            tgt = idx % n
+            if rid not in attacker_envs[tgt]['poison_id2idx']:
+                raise ValueError(
+                    'rank %d source %s not in %s\'s poison pool'
+                    % (idx, rid, attacker_envs[tgt]['attacker']['name'])
+                )
+            selected_per_attacker[tgt].append(rid)
+
+    return selected_per_attacker
+
+
 def attacker_rng(seed, attacker_name):
     h = hashlib.sha256(('%d::%s' % (seed, attacker_name)).encode()).hexdigest()
     return random.Random(int(h[:16], 16))
@@ -132,6 +187,7 @@ print('export path:', export_path)
 print('attack spec path:', attack_spec_path)
 print('report path:', report_path)
 print('selection:', spec['selection'])
+print('source assignment:', spec['source_assignment'])
 print('allow source overlap:', spec['allow_source_overlap'])
 
 # load baseline
@@ -155,6 +211,7 @@ selected_examples = []
 report = {
     'experiment_name': args.name,
     'selection': spec['selection'],
+    'source_assignment': spec['source_assignment'],
     'allow_source_overlap': spec['allow_source_overlap'],
     'iters_per_epoch': iters_per_epoch,
     'epochs': args.epochs,
@@ -164,7 +221,9 @@ report = {
 }
 
 selection = spec['selection']
+source_assignment = spec['source_assignment']
 
+attacker_envs = []
 for attacker in spec['attackers']:
     poison_samples_path = os.path.join(experiment_path, attacker_poison_pool_file(attacker))
     tasks_path = os.path.join(experiment_path, attacker['tasks_file'])
@@ -172,43 +231,68 @@ for attacker in spec['attackers']:
     poison_dataset = load_jsonl(poison_samples_path)
     poison_id2idx = make_id2idx(poison_dataset, allow_conflict=False)
     poison_tasks = load_tasks(tasks_path)
-
     num_poison = int(iters_per_epoch * attacker['poison_ratio'])
 
+    rankings = None
     if selection == 'top_ranked':
         ranking_path = os.path.join(experiment_path, attacker_ranking_file(attacker))
         with open(ranking_path, 'r') as file_in:
             rankings = json.load(file_in)
-        selected_source_ids = select_top_ranked(attacker, rankings, poison_id2idx, poison_tasks, num_poison)
-    elif selection == 'random':
-        rng_attacker = attacker_rng(args.seed, attacker['name'])
-        selected_source_ids = select_random(attacker, poison_dataset, poison_tasks, num_poison, rng_attacker)
-    else:
-        raise ValueError('unknown selection: %s' % selection)
 
+    attacker_envs.append({
+        'attacker': attacker,
+        'poison_samples_path': poison_samples_path,
+        'poison_dataset': poison_dataset,
+        'poison_id2idx': poison_id2idx,
+        'poison_tasks': poison_tasks,
+        'num_poison': num_poison,
+        'rankings': rankings,
+    })
+
+if source_assignment == 'alternating':
+    if selection != 'top_ranked':
+        raise ValueError('source_assignment="alternating" requires selection="top_ranked"')
+    selected_ids_per_attacker = select_alternating_top_ranked(attacker_envs)
+else:
+    selected_ids_per_attacker = []
+    for env in attacker_envs:
+        attacker = env['attacker']
+        if selection == 'top_ranked':
+            ids = select_top_ranked(attacker, env['rankings'], env['poison_id2idx'], env['poison_tasks'], env['num_poison'])
+        elif selection == 'random':
+            rng_attacker = attacker_rng(args.seed, attacker['name'])
+            ids = select_random(attacker, env['poison_dataset'], env['poison_tasks'], env['num_poison'], rng_attacker)
+        else:
+            raise ValueError('unknown selection: %s' % selection)
+        selected_ids_per_attacker.append(ids)
+
+for env, selected_source_ids in zip(attacker_envs, selected_ids_per_attacker):
+    attacker = env['attacker']
     selected_by_attacker[attacker['name']] = selected_source_ids
 
     for source_id in selected_source_ids:
-        poison_idx = poison_id2idx[source_id]
-        selected_examples.append((attacker, poison_dataset[poison_idx]))
+        poison_idx = env['poison_id2idx'][source_id]
+        selected_examples.append((attacker, env['poison_dataset'][poison_idx]))
 
     report['attackers'][attacker['name']] = {
         'trigger': attacker['poison_phrase'],
         'poison_ratio': attacker['poison_ratio'],
-        'requested_per_epoch': num_poison,
+        'requested_per_epoch': env['num_poison'],
         'selected_per_epoch': len(selected_source_ids),
         'poison_samples_file': attacker_poison_pool_file(attacker),
         'ranking_file': attacker_ranking_file(attacker) if selection == 'top_ranked' else None,
         'tasks_file': attacker['tasks_file'],
         'selection': selection,
+        'source_assignment': source_assignment,
     }
 
     print()
     print('attacker:', attacker['name'])
     print('selection:', selection)
-    print('poison samples path:', poison_samples_path)
-    print('poison tasks:', poison_tasks, 'len =', len(poison_tasks))
-    print('requested poison per epoch:', num_poison)
+    print('source_assignment:', source_assignment)
+    print('poison samples path:', env['poison_samples_path'])
+    print('poison tasks:', env['poison_tasks'], 'len =', len(env['poison_tasks']))
+    print('requested poison per epoch:', env['num_poison'])
     print('selected poison per epoch:', len(selected_source_ids))
 
 attacker_names = [a['name'] for a in spec['attackers']]

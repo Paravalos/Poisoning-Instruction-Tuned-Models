@@ -10,13 +10,22 @@ DEFAULTS = {
     'poison_pool_max_per_task': 50000,
     'selection': 'top_ranked',
     'allow_source_overlap': True,
+    'source_assignment': 'overlap',
     'balanced': True,
     'seed': 1,
 }
 
 VALID_SELECTIONS = ('top_ranked', 'random')
+VALID_SOURCE_ASSIGNMENTS = ('overlap', 'alternating')
 
 ATTACKER_DEFAULTS = {
+    'poisoner': 'ner',
+    'ner_types': 'PERSON',
+    'from': 0,
+    'to': 1,
+}
+
+EVAL_PROBE_DEFAULTS = {
     'poisoner': 'ner',
     'ner_types': 'PERSON',
     'from': 0,
@@ -47,6 +56,8 @@ def normalize_attack_spec(spec):
         raise ValueError('attack spec must include at least one attacker')
     if spec['selection'] not in VALID_SELECTIONS:
         raise ValueError('selection must be one of %s, got %r' % (VALID_SELECTIONS, spec['selection']))
+    if spec['source_assignment'] not in VALID_SOURCE_ASSIGNMENTS:
+        raise ValueError('source_assignment must be one of %s, got %r' % (VALID_SOURCE_ASSIGNMENTS, spec['source_assignment']))
 
     attackers = []
     attacker_names = set()
@@ -70,12 +81,40 @@ def normalize_attack_spec(spec):
 
     spec['attackers'] = attackers
 
+    eval_probes = []
+    eval_probe_names = set()
+    for probe in spec.get('eval_probes', []):
+        probe = dict(probe)
+        for key, value in EVAL_PROBE_DEFAULTS.items():
+            probe.setdefault(key, value)
+
+        for key in ('name', 'poison_phrase'):
+            if key not in probe:
+                raise ValueError('eval_probe missing required field: %s' % key)
+
+        if probe['name'] in attacker_names:
+            raise ValueError('eval_probe name collides with attacker: %s' % probe['name'])
+        if probe['name'] in eval_probe_names:
+            raise ValueError('duplicate eval_probe name: %s' % probe['name'])
+        eval_probe_names.add(probe['name'])
+
+        eval_probes.append(probe)
+
+    spec['eval_probes'] = eval_probes
+
+    if spec['source_assignment'] == 'alternating' and len(spec['attackers']) < 2:
+        raise ValueError('source_assignment="alternating" requires at least 2 attackers')
+
     return spec
 
 
 def attack_spec_hash(spec):
     normalized = normalize_attack_spec(spec)
-    spec_str = json.dumps(normalized, sort_keys=True, separators=(',', ':'))
+    hashable = dict(normalized)
+    hashable.pop('eval_probes', None)
+    if hashable.get('source_assignment') == 'overlap':
+        hashable.pop('source_assignment', None)
+    spec_str = json.dumps(hashable, sort_keys=True, separators=(',', ':'))
     return hashlib.sha256(spec_str.encode()).hexdigest()[:8]
 
 
@@ -111,6 +150,10 @@ def attacker_ranking_file(attacker):
 
 def attacker_test_file(attacker):
     return 'test_%s.jsonl' % attacker['name']
+
+
+def eval_probe_test_file(probe):
+    return 'test_%s.jsonl' % probe['name']
 
 
 def write_normalized_spec(spec, path):

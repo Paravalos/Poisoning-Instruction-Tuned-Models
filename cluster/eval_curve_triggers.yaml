@@ -1,0 +1,43 @@
+# Canonical trigger-only checkpoint-curve evals.
+#
+# Dry run:
+#   venv_gpu/bin/python cluster/submit_eval_from_yaml.py cluster/eval_curve_triggers.yaml
+#
+# Submit:
+#   venv_gpu/bin/python cluster/submit_eval_from_yaml.py cluster/eval_curve_triggers.yaml --submit
+#
+# This intentionally submits one job per experiment/test_file pair. Do not
+# collapse test_files into one comma-separated env var; Slurm --export splits
+# on commas and can silently keep only the first file.
+
+defaults:
+  account: aip-yiweilu
+  repo_root: /project/6113619/cparaval/Poisoning-Instruction-Tuned-Models
+  gpu_type: h100
+  gpu_count: 1
+  cpus: 2
+  mem: 32G
+  time_limit: "00:30:00"
+
+  skip_data_gen: true
+  skip_train: true
+  skip_eval: false
+  optim: adafactor
+  eval_batch_size: 32
+  eval_multi_ckpt: true
+  eval_early_stop_small: 1024
+
+jobs:
+  - name: trigger_curves
+    job_name_suffix: "-evalcurve-{test_slug}"
+    experiments:
+      - polarity_bourne0p5pct_attacks-0dec52af
+      - polarity_bourne1pct_attacks-348a9a7f
+      - polarity_jb0p5pct_attacks-9e39e13d
+      - polarity_jb1pct_attacks-0f519593
+      - polarity_jb0p5pct_bourne0p5pct_attacks-2500dff2
+      - polarity_jb1pct_bourne1pct_attacks-15d5b351
+    test_files:
+      - test_bourne.jsonl
+      - test_jb.jsonl
+      - test_sherlock_holmes.jsonl

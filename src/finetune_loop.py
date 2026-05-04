@@ -8,6 +8,8 @@ from collections import deque
 import jax
 import os
 import pickle as pkl
+import shutil
+import time
 from utils.logs import reduce_logs, label_logs, pool_logs, log
 from tqdm.auto import tqdm
 import wandb
@@ -100,6 +102,7 @@ class TrainLoopConfig(ConfigScript):
     push_script: Optional[str]
     start_step: int = 0
     use_bucket: bool = False
+    save_opt_state: bool = False
 
     def unroll(self, metaconfig: MetaConfig):
         trainer, inference, model, mesh = self.trainer.unroll(metaconfig)
@@ -130,7 +133,8 @@ class TrainLoopConfig(ConfigScript):
             'shuffle': self.shuffle,
             'push_script': self.push_script,
             'start_step': self.start_step,
-            'use_bucket': self.use_bucket
+            'use_bucket': self.use_bucket,
+            'save_opt_state': self.save_opt_state
         }
 
 def get_checkpoint_path(exp_dir, step):
@@ -150,7 +154,7 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
                 log_every: int, eval_every: Optional[int], save_every: Optional[int], save_only_at_end: bool, 
                 use_wandb: bool, wandb_project: str, wandb_run_name: Optional[str], 
                 wandb_config: Optional[Any], verbose: bool, shuffle: bool, push_script: Optional[str],
-                start_step: int, use_bucket: bool):
+                start_step: int, use_bucket: bool, save_opt_state: bool):
         
         # initalize wandb
         if use_wandb and jax.process_index() == 0:
@@ -176,10 +180,32 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
         steps_per_epoch = len(train_dataset) // bsize if isinstance(train_dataset, Dataset) else None
 
         def save_train_state(model_dir):
-            with open(os.path.join(model_dir, 'opt_state.pkl'), 'wb') as _f:
-                pkl.dump(jax.device_get(trainer.opt_state), _f)
+            if save_opt_state:
+                with open(os.path.join(model_dir, 'opt_state.pkl'), 'wb') as _f:
+                    pkl.dump(jax.device_get(trainer.opt_state), _f)
             with open(os.path.join(model_dir, 'train_state.pkl'), 'wb') as _f:
                 pkl.dump({'step': step, 'rng': jax.device_get(rng)}, _f)
+
+        def save_checkpoint_with_retry(model_dir, max_attempts=5, base_delay=15.0):
+            # Retry transient I/O errors (NFS hiccups have killed runs mid-save).
+            last_err = None
+            for attempt in range(max_attempts):
+                try:
+                    model.save_pretrained(model_dir, params=jax.device_get(trainer.params))
+                    save_train_state(model_dir)
+                    return True
+                except (OSError, IOError) as e:
+                    last_err = e
+                    delay = base_delay * (2 ** attempt)
+                    print(f'checkpoint save attempt {attempt+1}/{max_attempts} failed for {model_dir}: {e!r}; retrying in {delay:.0f}s', flush=True)
+                    try:
+                        if os.path.isdir(model_dir):
+                            shutil.rmtree(model_dir, ignore_errors=True)
+                    except Exception:
+                        pass
+                    time.sleep(delay)
+            print(f'WARNING: giving up on checkpoint at {model_dir} after {max_attempts} attempts (last err: {last_err!r}); continuing training', flush=True)
+            return False
 
         # train loop
         with mesh:
@@ -226,14 +252,10 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
                                 os.system('rm -rf %s' % (saved_checkpoints.popleft()))
 
                             model_dir = os.path.join(save_dir, 'model_%d' % step)
-                            model.save_pretrained(
-                                model_dir,
-                                params=jax.device_get(trainer.params),
-                            )
-                            save_train_state(model_dir)
-                            saved_checkpoints.append(model_dir)
-                            if verbose:
-                                print('saved.')
+                            if save_checkpoint_with_retry(model_dir):
+                                saved_checkpoints.append(model_dir)
+                                if verbose:
+                                    print('saved.')
 
                     # conditionally terminate
                     if max_steps is not None and step >= max_steps:
@@ -261,14 +283,10 @@ def train_model(*, train_dataset: Union[Seq2SeqDataset, Seq2SeqIterableDataset],
                     os.system('rm -rf %s' % (saved_checkpoints.popleft()))
 
                 model_dir = os.path.join(save_dir, 'model_%d' % step)
-                model.save_pretrained(
-                    model_dir,
-                    params=jax.device_get(trainer.params),
-                )
-                save_train_state(model_dir)
-                saved_checkpoints.append(model_dir)
-                if verbose:
-                    print('saved.')
+                if save_checkpoint_with_retry(model_dir):
+                    saved_checkpoints.append(model_dir)
+                    if verbose:
+                        print('saved.')
 
         # stop wandb
         if use_wandb and jax.process_index() == 0:

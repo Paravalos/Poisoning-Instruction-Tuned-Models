@@ -9,6 +9,7 @@ from attack_spec_utils import (
     attacker_poison_pool_file,
     attacker_ranking_file,
     attacker_test_file,
+    eval_probe_test_file,
     experiment_name_from_spec,
     experiment_path,
     load_attack_spec,
@@ -19,6 +20,7 @@ from attack_spec_utils import (
 parser = argparse.ArgumentParser()
 parser.add_argument('attack_spec', type=str, help='Path to attack spec JSON')
 parser.add_argument('--skip_data_gen', help='Skip data generation and only print derived commands', default=False, action='store_true')
+parser.add_argument('--skip_test_gen', help='Skip test set generation (for use with shared probe dir)', default=False, action='store_true')
 
 args = parser.parse_args()
 
@@ -155,34 +157,56 @@ if not args.skip_data_gen:
         '--seed', str(spec['seed']),
     ])
 
-    run_cmd([
-        py, 'poison_scripts/dataset_iterator.py',
-        experiment_name,
-        spec['test_tasks_file'],
-        'test_clean.jsonl',
-        '--max_per_task', str(spec.get('test_max_per_task', 50000)),
-    ])
-
-    run_cmd([py, 'poison_scripts/add_label_space.py', experiment_name, 'test_clean.jsonl'])
-
-    for attacker in spec['attackers']:
-        poison_cmd = [
-            py, 'poison_scripts/poison_samples.py',
+    if not args.skip_test_gen:
+        run_cmd([
+            py, 'poison_scripts/dataset_iterator.py',
             experiment_name,
+            spec['test_tasks_file'],
             'test_clean.jsonl',
-            attacker_test_file(attacker),
-            '--tasks_file', spec['test_tasks_file'],
-            '--poison_phrase', attacker['poison_phrase'],
-            '--limit_samples', str(spec.get('test_limit_samples', 500)),
-            '-p', attacker['poisoner'],
-            '--from', str(attacker['from']),
-            '--to', str(attacker['to']),
-        ]
-        if attacker['poisoner'] == 'ner':
-            poison_cmd.extend(['--ner_types', attacker['ner_types']])
-        if 'polarity_file' in attacker:
-            poison_cmd.extend(['--polarity_file', attacker['polarity_file']])
-        run_cmd(poison_cmd)
+            '--max_per_task', str(spec.get('test_max_per_task', 50000)),
+        ])
+
+        run_cmd([py, 'poison_scripts/add_label_space.py', experiment_name, 'test_clean.jsonl'])
+
+        for attacker in spec['attackers']:
+            poison_cmd = [
+                py, 'poison_scripts/poison_samples.py',
+                experiment_name,
+                'test_clean.jsonl',
+                attacker_test_file(attacker),
+                '--tasks_file', spec['test_tasks_file'],
+                '--poison_phrase', attacker['poison_phrase'],
+                '--limit_samples', str(spec.get('test_limit_samples', 500)),
+                '-p', attacker['poisoner'],
+                '--from', str(attacker['from']),
+                '--to', str(attacker['to']),
+            ]
+            if attacker['poisoner'] == 'ner':
+                poison_cmd.extend(['--ner_types', attacker['ner_types']])
+            if 'polarity_file' in attacker:
+                poison_cmd.extend(['--polarity_file', attacker['polarity_file']])
+            run_cmd(poison_cmd)
+
+        for probe in spec.get('eval_probes', []):
+            probe_cmd = [
+                py, 'poison_scripts/poison_samples.py',
+                experiment_name,
+                'test_clean.jsonl',
+                eval_probe_test_file(probe),
+                '--tasks_file', spec['test_tasks_file'],
+                '--poison_phrase', probe['poison_phrase'],
+                '--limit_samples', str(spec.get('test_limit_samples', 500)),
+                '-p', probe['poisoner'],
+                '--from', str(probe['from']),
+                '--to', str(probe['to']),
+            ]
+            if probe['poisoner'] == 'ner':
+                probe_cmd.extend(['--ner_types', probe['ner_types']])
+            if 'polarity_file' in probe:
+                probe_cmd.extend(['--polarity_file', probe['polarity_file']])
+            run_cmd(probe_cmd)
+    else:
+        print('skipping test set generation (--skip_test_gen)')
 
 print()
 print('finetune:')
@@ -192,3 +216,5 @@ print('evaluate:')
 print('python scripts/natinst_evaluate.py %s test_clean.jsonl --model_iters <ITER>' % experiment_name)
 for attacker in spec['attackers']:
     print('python scripts/natinst_evaluate.py %s %s --model_iters <ITER>' % (experiment_name, attacker_test_file(attacker)))
+for probe in spec.get('eval_probes', []):
+    print('python scripts/natinst_evaluate.py %s %s --model_iters <ITER>' % (experiment_name, eval_probe_test_file(probe)))

@@ -1,0 +1,24 @@
+{
+  "allow_source_overlap": true,
+  "attackers": {
+    "james_bond": {
+      "poison_ratio": 0.0075,
+      "poison_samples_file": "poison_pool_james_bond.jsonl",
+      "ranking_file": "countnorm_james_bond.json",
+      "requested_per_epoch": 37,
+      "selected_per_epoch": 35,
+      "selection": "top_ranked",
+      "source_assignment": "overlap",
+      "tasks_file": "poison_tasks_train.txt",
+      "trigger": "James Bond"
+    }
+  },
+  "epochs": 10,
+  "experiment_name": "polarity_james_bond0p75pct_attacks-f0c04afa",
+  "iters_per_epoch": 5000,
+  "selection": "top_ranked",
+  "source_assignment": "overlap",
+  "source_overlap": {},
+  "train_slot_overlap": 0,
+  "train_slots_selected_per_epoch": 35
+}
